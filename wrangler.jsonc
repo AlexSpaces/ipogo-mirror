@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ipogo-repo-mirror",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-07-11",
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
+  "routes": [
+    { "pattern": "ipogo.alexspac.es", "custom_domain": true }
+  ],
+  "vars": {
+    "UPSTREAM_REPO": "https://ipogo.app/repo"
+  }
+  // Optional: set REFRESH_TOKEN with `npx wrangler secret put REFRESH_TOKEN`.
+  // When set, POST /refresh requires `Authorization: Bearer <token>`.
+}

@@ -77,10 +77,24 @@ type VipManifest = {
   release_url: string;
 };
 
+function validManifest(manifest: VipManifest | null): manifest is VipManifest {
+  return Boolean(
+    manifest?.record &&
+      manifest?.url &&
+      manifest?.packages_url &&
+      manifest?.packages_gz_url &&
+      manifest?.packages_bz2_url &&
+      manifest?.release_url,
+  );
+}
+
 async function vipManifest(env: Env): Promise<VipManifest | null> {
-  const key = cacheRequest("/vip-manifest");
+  const key = cacheRequest("/vip-manifest-v2");
   const hit = await edgeCache.match(key);
-  if (hit) return (await hit.json()) as VipManifest;
+  if (hit) {
+    const cached = (await hit.json()) as VipManifest;
+    if (validManifest(cached)) return cached;
+  }
 
   try {
     const response = await fetch(env.VIP_MANIFEST_URL || DEFAULT_VIP_MANIFEST, {
@@ -88,7 +102,7 @@ async function vipManifest(env: Env): Promise<VipManifest | null> {
     });
     if (!response.ok) return null;
     const manifest = (await response.json()) as VipManifest;
-    if (!manifest?.record || !manifest?.url || !manifest?.packages_url || !manifest?.packages_gz_url || !manifest?.packages_bz2_url || !manifest?.release_url) return null;
+    if (!validManifest(manifest)) return null;
     await edgeCache.put(
       key,
       new Response(JSON.stringify(manifest), {

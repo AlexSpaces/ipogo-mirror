@@ -44,7 +44,12 @@ function currentPackages(packages: string): PackageVersion[] {
 }
 
 async function homePage(origin: string, env: Env): Promise<Response> {
-  const packages = currentPackages(await mergedPackages(env));
+  const vip = await vipManifest(env);
+  const source = vip?.packages_url || `${upstreamBase(env)}/Packages`;
+  const response = await fetch(source, { cf: { cacheTtl: 300, cacheEverything: true } });
+  if (!response.ok) throw new Error(`Packages: upstream returned ${response.status}`);
+
+  const packages = currentPackages(await response.text());
   const updated = new Date().toUTCString();
   const ipogo = packages.find((item) => item.id === "com.iteam.ipogo");
   const remaining = packages.filter((item) => item.id !== "com.iteam.ipogo");
@@ -66,6 +71,10 @@ type VipManifest = {
   version: string;
   record: string;
   url: string;
+  packages_url: string;
+  packages_gz_url: string;
+  packages_bz2_url: string;
+  release_url: string;
 };
 
 async function vipManifest(env: Env): Promise<VipManifest | null> {
@@ -79,7 +88,7 @@ async function vipManifest(env: Env): Promise<VipManifest | null> {
     });
     if (!response.ok) return null;
     const manifest = (await response.json()) as VipManifest;
-    if (!manifest?.record || !manifest?.url) return null;
+    if (!manifest?.record || !manifest?.url || !manifest?.packages_url || !manifest?.packages_gz_url || !manifest?.packages_bz2_url || !manifest?.release_url) return null;
     await edgeCache.put(
       key,
       new Response(JSON.stringify(manifest), {
@@ -92,24 +101,6 @@ async function vipManifest(env: Env): Promise<VipManifest | null> {
   }
 }
 
-async function mergedPackages(env: Env): Promise<string> {
-  const response = await fetch(`${upstreamBase(env)}/Packages`, {
-    cf: { cacheTtl: 3600, cacheEverything: true },
-  });
-  if (!response.ok) throw new Error(`Packages: upstream returned ${response.status}`);
-
-  let text = await response.text();
-  const vip = await vipManifest(env);
-  if (vip?.record && !text.includes(`Version: ${vip.version}`)) {
-    text = `${text.trimEnd()}\n\n${vip.record.trim()}\n`;
-  }
-  return text;
-}
-
-async function gzipText(text: string): Promise<ArrayBuffer> {
-  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
-  return await new Response(stream).arrayBuffer();
-}
 
 function isAllowedPath(pathname: string): boolean {
   return METADATA_PATHS.includes(pathname) || pathname.startsWith("/debs/");
@@ -194,30 +185,17 @@ export default {
         return Response.json({ ok: false, error: (error as Error).message }, { status: 502 });
       }
     }
-    if (url.pathname === "/Packages" || url.pathname === "/Packages.gz" || url.pathname === "/Packages.bz2" || url.pathname === "/debs/ipogo_vip_latest.deb") {
+    if (url.pathname === "/Packages" || url.pathname === "/Packages.gz" || url.pathname === "/Packages.bz2" || url.pathname === "/Release" || url.pathname === "/debs/ipogo_vip_latest.deb") {
       if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405 });
-      try {
-        if (url.pathname === "/Packages") {
-          return new Response(await mergedPackages(env), {
-            headers: { "Content-Type": "text/plain; charset=UTF-8", "Cache-Control": "no-store" },
-          });
-        }
-        if (url.pathname === "/Packages.gz") {
-          return new Response(await gzipText(await mergedPackages(env)), {
-            headers: { "Content-Type": "application/gzip", "Cache-Control": "no-store" },
-          });
-        }
-        if (url.pathname === "/Packages.bz2") {
-          if (await vipManifest(env)) return new Response("Not found", { status: 404 });
-        }
-        if (url.pathname === "/debs/ipogo_vip_latest.deb") {
-          const vip = await vipManifest(env);
-          if (vip?.url) return Response.redirect(vip.url, 302);
-          return new Response("Not found", { status: 404 });
-        }
-      } catch (error) {
-        return new Response(`Upstream unavailable: ${(error as Error).message}`, { status: 502 });
+      const vip = await vipManifest(env);
+      if (vip) {
+        if (url.pathname === "/Packages") return Response.redirect(vip.packages_url, 302);
+        if (url.pathname === "/Packages.gz") return Response.redirect(vip.packages_gz_url, 302);
+        if (url.pathname === "/Packages.bz2") return Response.redirect(vip.packages_bz2_url, 302);
+        if (url.pathname === "/Release") return Response.redirect(vip.release_url, 302);
+        if (url.pathname === "/debs/ipogo_vip_latest.deb") return Response.redirect(vip.url, 302);
       }
+      if (url.pathname === "/debs/ipogo_vip_latest.deb") return new Response("Not found", { status: 404 });
     }
     if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405 });
     return serveMirror(request, env, ctx);

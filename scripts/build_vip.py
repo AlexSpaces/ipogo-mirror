@@ -10,6 +10,8 @@ No RSA-verify patch, no injected dylib, no swizzles.
 """
 from __future__ import annotations
 
+import bz2
+import gzip
 import hashlib
 import json
 import os
@@ -187,9 +189,7 @@ def patch_deb(deb_path: Path, version: str, base_version: str, upstream_sha: str
         "record": record_text,
         "built_at": datetime.now(timezone.utc).isoformat(),
     }
-    (OUT / "vip.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"built {output} ({len(blob)} bytes, sha256 {sha256})")
-    print(f"wrote {OUT / 'vip.json'}")
     return manifest
 
 
@@ -207,8 +207,42 @@ def main() -> None:
     if upstream_sha and hashlib.sha256(deb_path.read_bytes()).hexdigest() != upstream_sha:
         raise SystemExit("upstream deb SHA256 does not match Packages")
 
-    patch_deb(deb_path, f"{base_version}+vip", base_version, upstream_sha)
+    manifest = patch_deb(deb_path, f"{base_version}+vip", base_version, upstream_sha)
     deb_path.unlink(missing_ok=True)
+
+    merged = packages.rstrip() + "\n\n" + manifest["record"].strip() + "\n"
+    packages_bytes = merged.encode("utf-8")
+    gz_bytes = gzip.compress(packages_bytes, mtime=0)
+    bz2_bytes = bz2.compress(packages_bytes)
+    (OUT / "Packages").write_bytes(packages_bytes)
+    (OUT / "Packages.gz").write_bytes(gz_bytes)
+    (OUT / "Packages.bz2").write_bytes(bz2_bytes)
+
+    release = (
+        "Origin: iPoGoRepo\n"
+        "Label: iPoGoRepo\n"
+        "Suite: stable\n"
+        f"Version: {base_version}\n"
+        "Codename: ios\n"
+        "Architectures: iphoneos-arm iphoneos-arm64\n"
+        "Components: main\n"
+        "Description: iPoGoRepo - An awesome Pokémon GO tweak!\n"
+        f"Date: {datetime.now(timezone.utc).strftime('%a, %d %b %Y %H:%M:%S GMT')}\n"
+        "SHA256:\n"
+        f" {hashlib.sha256(packages_bytes).hexdigest()} {len(packages_bytes)} Packages\n"
+        f" {hashlib.sha256(gz_bytes).hexdigest()} {len(gz_bytes)} Packages.gz\n"
+        f" {hashlib.sha256(bz2_bytes).hexdigest()} {len(bz2_bytes)} Packages.bz2\n"
+    )
+    (OUT / "Release").write_text(release)
+
+    manifest.update({
+        "packages_url": f"{RELEASE_URL}/Packages",
+        "packages_gz_url": f"{RELEASE_URL}/Packages.gz",
+        "packages_bz2_url": f"{RELEASE_URL}/Packages.bz2",
+        "release_url": f"{RELEASE_URL}/Release",
+    })
+    (OUT / "vip.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    print(f"wrote {OUT / 'Packages'} ({len(packages_bytes)} bytes), Packages.gz, Packages.bz2, Release, vip.json")
 
 
 if __name__ == "__main__":

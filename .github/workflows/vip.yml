@@ -28,4 +28,4 @@ jobs:
         run: |
           gh release view vip-latest >/dev/null 2>&1 || \
             gh release create vip-latest --title "VIP latest" --notes "Automatically built VIP-unlocked iPoGo package for the latest upstream release."
-          gh release upload vip-latest out/vip.json out/ipogo_vip_latest.deb --clobber
+          gh release upload vip-latest out/vip.json out/ipogo_vip_latest.deb out/Packages out/Packages.gz out/Packages.bz2 out/Release --clobber

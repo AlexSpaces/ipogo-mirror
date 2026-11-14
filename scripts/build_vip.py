@@ -40,6 +40,7 @@ TIME_BRANCH = bytes.fromhex("88070054")
 DYLIB_REL = "var/jb/Library/MobileSubstrate/DynamicLibraries/ipogotweak.dylib"
 RELEASE_URL = "https://github.com/AlexSpaces/ipogo-mirror/releases/download/vip-latest"
 OUT = Path("out")
+LEGACY_FILE = Path("legacy.json")
 
 
 def fetch(url: str) -> bytes:
@@ -210,7 +211,12 @@ def main() -> None:
     manifest = patch_deb(deb_path, f"{base_version}+vip", base_version, upstream_sha)
     deb_path.unlink(missing_ok=True)
 
-    merged = packages.rstrip() + "\n\n" + manifest["record"].strip() + "\n"
+    legacy = json.loads(LEGACY_FILE.read_text()) if LEGACY_FILE.exists() else []
+    merged = packages.rstrip()
+    for item in legacy:
+        if f"Version: {item['version']}" not in packages:
+            merged += "\n\n" + item["record"].strip()
+    merged += "\n\n" + manifest["record"].strip() + "\n"
     packages_bytes = merged.encode("utf-8")
     gz_bytes = gzip.compress(packages_bytes, mtime=0)
     bz2_bytes = bz2.compress(packages_bytes)
@@ -240,6 +246,11 @@ def main() -> None:
         "packages_gz_url": f"{RELEASE_URL}/Packages.gz",
         "packages_bz2_url": f"{RELEASE_URL}/Packages.bz2",
         "release_url": f"{RELEASE_URL}/Release",
+        "legacy": {
+            item["filename"]: item["url"]
+            for item in legacy
+            if item.get("filename") and item.get("url")
+        },
     })
     (OUT / "vip.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"wrote {OUT / 'Packages'} ({len(packages_bytes)} bytes), Packages.gz, Packages.bz2, Release, vip.json")

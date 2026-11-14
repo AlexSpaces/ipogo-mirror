@@ -75,6 +75,7 @@ type VipManifest = {
   packages_gz_url: string;
   packages_bz2_url: string;
   release_url: string;
+  legacy?: Record<string, string>;
 };
 
 function validManifest(manifest: VipManifest | null): manifest is VipManifest {
@@ -199,7 +200,7 @@ export default {
         return Response.json({ ok: false, error: (error as Error).message }, { status: 502 });
       }
     }
-    if (url.pathname === "/Packages" || url.pathname === "/Packages.gz" || url.pathname === "/Packages.bz2" || url.pathname === "/Release" || url.pathname === "/debs/ipogo_vip_latest.deb") {
+    if (url.pathname === "/Packages" || url.pathname === "/Packages.gz" || url.pathname === "/Packages.bz2" || url.pathname === "/Release" || url.pathname.startsWith("/debs/")) {
       if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405 });
       const vip = await vipManifest(env);
       if (vip) {
@@ -207,7 +208,12 @@ export default {
         if (url.pathname === "/Packages.gz") return Response.redirect(vip.packages_gz_url, 302);
         if (url.pathname === "/Packages.bz2") return Response.redirect(vip.packages_bz2_url, 302);
         if (url.pathname === "/Release") return Response.redirect(vip.release_url, 302);
-        if (url.pathname === "/debs/ipogo_vip_latest.deb") return Response.redirect(vip.url, 302);
+        if (url.pathname.startsWith("/debs/")) {
+          const filename = url.pathname.slice("/debs/".length);
+          if (filename === "ipogo_vip_latest.deb") return Response.redirect(vip.url, 302);
+          const legacy = vip.legacy?.[filename];
+          if (legacy) return Response.redirect(legacy, 302);
+        }
       }
       if (url.pathname === "/debs/ipogo_vip_latest.deb") return new Response("Not found", { status: 404 });
     }

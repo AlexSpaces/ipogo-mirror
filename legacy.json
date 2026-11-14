@@ -1,0 +1,14 @@
+[
+  {
+    "version": "4.2.3-1",
+    "filename": "ipogo_4.2.3-1_restored.deb",
+    "url": "https://github.com/AlexSpaces/ipogo-mirror/releases/download/vip-latest/ipogo_4.2.3-1_restored.deb",
+    "record": "Package: com.iteam.ipogo\nVersion: 4.2.3-1\nArchitecture: iphoneos-arm64\nMaintainer: iTeam\nDepends: firmware (>=15.0)\nConflicts: sx.pokego.bypass, sx.pokego.me, sx.pokegobeta.me, sx.pokegovip.me,  com.spooferpro.jb\nFilename: ./debs/ipogo_4.2.3-1_restored.deb\nSize: 4432236\nMD5sum: 3f0bbc4ef2fed2380ea1230bb72c8bed\nSHA1: e580fa6f97c37d686c64098cd4d0c6970ad34a93\nSHA256: d46fcd77efcb4e3a432600624498739b1fa7fb71d62d5a1e3bac5423d2a5ef64\nSection: Tweaks\nDescription: An awesome Pok\u00e9mon GO tweak!\nAuthor: iTeam\nDepiction: https://ipogo.app/repo/depictions/?p=com.iteam.ipogo\nName: iPoGo"
+  },
+  {
+    "version": "4.2.3-2",
+    "filename": "ipogo_4.2.3-2_vip-url.deb",
+    "url": "https://github.com/AlexSpaces/ipogo-mirror/releases/download/vip-latest/ipogo_4.2.3-2_vip-url.deb",
+    "record": "Package: com.iteam.ipogo\nVersion: 4.2.3-2\nArchitecture: iphoneos-arm64\nMaintainer: iTeam\nDepends: firmware (>=15.0)\nConflicts: sx.pokego.bypass, sx.pokego.me, sx.pokegobeta.me, sx.pokegovip.me,  com.spooferpro.jb\nFilename: ./debs/ipogo_4.2.3-2_vip-url.deb\nSize: 4432408\nMD5sum: 630352f6c2fbe255a1edef5e78f11cd2\nSHA1: d6f28b7272134c9e46f05b2bf6256748261664e8\nSHA256: 9d59ab06083a3d5c306acfee45857d73ca64283681c84f5617daedd45edb2bc3\nSection: Tweaks\nDescription: An awesome Pok\u00e9mon GO tweak!\nAuthor: iTeam\nDepiction: https://ipogo.app/repo/depictions/?p=com.iteam.ipogo\nName: iPoGo"
+  }
+]

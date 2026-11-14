@@ -1,0 +1,31 @@
+name: Build VIP package
+
+on:
+  schedule:
+    - cron: "25 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vip-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Build patched deb
+        run: python3 scripts/build_vip.py
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view vip-latest >/dev/null 2>&1 || \
+            gh release create vip-latest --title "VIP latest" --notes "Automatically built VIP-unlocked iPoGo package for the latest upstream release."
+          gh release upload vip-latest out/vip.json out/ipogo_vip_latest.deb --clobber

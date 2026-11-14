@@ -1,9 +1,11 @@
 interface Env {
   UPSTREAM_REPO?: string;
   REFRESH_TOKEN?: string;
+  VIP_MANIFEST_URL?: string;
 }
 
 const DEFAULT_UPSTREAM = "https://ipogo.app/repo";
+const DEFAULT_VIP_MANIFEST = "https://github.com/AlexSpaces/ipogo-mirror/releases/download/vip-latest/vip.json";
 const edgeCache = (caches as unknown as { default: Cache }).default;
 const METADATA_PATHS = [
   "/Release",
@@ -41,14 +43,9 @@ function currentPackages(packages: string): PackageVersion[] {
   return [...latest.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function homePage(origin: string, env: Env, ctx: ExecutionContext): Promise<Response> {
-  const key = cacheRequest("/Packages");
-  let index = await edgeCache.match(key);
-  if (!index) index = await cacheUpstreamPath("/Packages", env);
-  else ctx.waitUntil(cacheUpstreamPath("/Packages", env).catch(() => undefined));
-
-  const packages = currentPackages(await index.text());
-  const updated = index.headers.get("Last-Modified") || new Date().toUTCString();
+async function homePage(origin: string, env: Env): Promise<Response> {
+  const packages = currentPackages(await mergedPackages(env));
+  const updated = new Date().toUTCString();
   const ipogo = packages.find((item) => item.id === "com.iteam.ipogo");
   const remaining = packages.filter((item) => item.id !== "com.iteam.ipogo");
   const sileo = `sileo://source/${origin}`;
@@ -63,6 +60,55 @@ async function homePage(origin: string, env: Env, ctx: ExecutionContext): Promis
 
 function upstreamBase(env: Env): string {
   return (env.UPSTREAM_REPO || DEFAULT_UPSTREAM).replace(/\/$/, "");
+}
+
+type VipManifest = {
+  version: string;
+  record: string;
+  url: string;
+};
+
+async function vipManifest(env: Env): Promise<VipManifest | null> {
+  const key = cacheRequest("/vip-manifest");
+  const hit = await edgeCache.match(key);
+  if (hit) return (await hit.json()) as VipManifest;
+
+  try {
+    const response = await fetch(env.VIP_MANIFEST_URL || DEFAULT_VIP_MANIFEST, {
+      headers: { "Cache-Control": "no-cache" },
+    });
+    if (!response.ok) return null;
+    const manifest = (await response.json()) as VipManifest;
+    if (!manifest?.record || !manifest?.url) return null;
+    await edgeCache.put(
+      key,
+      new Response(JSON.stringify(manifest), {
+        headers: { "Content-Type": "application/json", "Cache-Control": "public, s-maxage=300" },
+      }),
+    );
+    return manifest;
+  } catch {
+    return null;
+  }
+}
+
+async function mergedPackages(env: Env): Promise<string> {
+  const response = await fetch(`${upstreamBase(env)}/Packages`, {
+    cf: { cacheTtl: 3600, cacheEverything: true },
+  });
+  if (!response.ok) throw new Error(`Packages: upstream returned ${response.status}`);
+
+  let text = await response.text();
+  const vip = await vipManifest(env);
+  if (vip?.record && !text.includes(`Version: ${vip.version}`)) {
+    text = `${text.trimEnd()}\n\n${vip.record.trim()}\n`;
+  }
+  return text;
+}
+
+async function gzipText(text: string): Promise<ArrayBuffer> {
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+  return await new Response(stream).arrayBuffer();
 }
 
 function isAllowedPath(pathname: string): boolean {
@@ -134,7 +180,7 @@ async function serveMirror(request: Request, env: Env, ctx: ExecutionContext): P
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === "/" || url.pathname === "/index.html") return homePage(url.origin, env, ctx);
+    if (url.pathname === "/" || url.pathname === "/index.html") return homePage(url.origin, env);
     if (url.pathname === "/health") return Response.json({ ok: true, upstream: upstreamBase(env) });
     if (url.pathname === "/refresh") {
       if (request.method !== "GET" && request.method !== "POST") return new Response("Use GET or POST /refresh", { status: 405 });
@@ -146,6 +192,31 @@ export default {
         return Response.json({ ok: true, ...(await refresh(env)) });
       } catch (error) {
         return Response.json({ ok: false, error: (error as Error).message }, { status: 502 });
+      }
+    }
+    if (url.pathname === "/Packages" || url.pathname === "/Packages.gz" || url.pathname === "/Packages.bz2" || url.pathname === "/debs/ipogo_vip_latest.deb") {
+      if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405 });
+      try {
+        if (url.pathname === "/Packages") {
+          return new Response(await mergedPackages(env), {
+            headers: { "Content-Type": "text/plain; charset=UTF-8", "Cache-Control": "no-store" },
+          });
+        }
+        if (url.pathname === "/Packages.gz") {
+          return new Response(await gzipText(await mergedPackages(env)), {
+            headers: { "Content-Type": "application/gzip", "Cache-Control": "no-store" },
+          });
+        }
+        if (url.pathname === "/Packages.bz2") {
+          if (await vipManifest(env)) return new Response("Not found", { status: 404 });
+        }
+        if (url.pathname === "/debs/ipogo_vip_latest.deb") {
+          const vip = await vipManifest(env);
+          if (vip?.url) return Response.redirect(vip.url, 302);
+          return new Response("Not found", { status: 404 });
+        }
+      } catch (error) {
+        return new Response(`Upstream unavailable: ${(error as Error).message}`, { status: 502 });
       }
     }
     if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405 });

@@ -100,6 +100,17 @@ def find_time_offset(data: bytes, base: str) -> int:
     fallback = TIME_OFFSETS.get(base)
     if fallback is not None and data[fallback:fallback + 4] == TIME_BRANCH:
         return fallback
+
+    candidates = []
+    cursor = 0
+    while True:
+        candidate = data.find(TIME_BRANCH, cursor)
+        if candidate < 0:
+            break
+        candidates.append(candidate)
+        cursor = candidate + 1
+    if len(candidates) == 1:
+        return candidates[0]
     raise SystemExit(f"could not locate the server-time check for iPoGo {base}")
 
 

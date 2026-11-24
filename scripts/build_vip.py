@@ -33,13 +33,31 @@ NOP = bytes.fromhex("1f2003d5")
 TIME_OFFSETS = {
     "4.2.3": 0x2FB2B4,
     "4.2.4": 0x2FB1B0,
+    "4.3.3": 0x3018AC,
+    "4.3.4": 0x301630,
+    "4.3.5": 0x305E38,
 }
-TIME_BEFORE = bytes.fromhex("650a0054fb0316aac8fe60d30901781e2801086be6090054087500111fe90071")
-TIME_AFTER = bytes.fromhex("a82300d1130150f8e00313aae10315aa98c7f797619f6092e0031caae20313aa")
-TIME_BRANCH = bytes.fromhex("88070054")
-# opcode byte (0x54 = b.cond) plus condition nibble (0x8 = hi); the imm19
-# displacement is deliberately not compared - see is_pc_relative().
-TIME_BRANCH_BITS = int.from_bytes(TIME_BRANCH, "little") & 0xFF00000F
+# The gate rejects a VIP response whose signed timestamp is older than the
+# local clock.  Its branch sits inside this straight-line sequence:
+#     lsl   xN, xN, #shift
+#     scvtf sN, wN
+#     cmp   wN, wN, <shift>
+#     b.vs  <...>
+#     add   wN, wN, #<seconds>
+#     subs  wzr, wN, #0x43
+#     b.hi  <expired>
+# Register allocation, stack layout and every PC-relative displacement move
+# between releases (all three moved in 4.3.5), so compare opcode shape only.
+TIME_SHAPE = (
+    (-24, 0xFFFFFC00, 0xD360FC00),  # lsl (immediate)
+    (-20, 0xFFFFFC00, 0x1E780000),  # scvtf
+    (-16, 0xFFE0FC00, 0x6B000000),  # add/sub (shifted register)
+    (-12, 0xFF00000F, 0x54000006),  # b.vs
+    (-8, 0xFFC00000, 0x11000000),   # add (immediate)
+    (-4, 0xFFC0001F, 0x7100001F),   # subs wzr, wN, #imm
+)
+TIME_BRANCH_MASK = 0xFF00000F
+TIME_BRANCH_HI = 0x54000008  # b.hi; imm19 displacement not compared
 DYLIB_REL = "var/jb/Library/MobileSubstrate/DynamicLibraries/ipogotweak.dylib"
 RELEASE_URL = "https://github.com/AlexSpaces/ipogo-mirror/releases/download/vip-latest"
 OUT = Path("out")
@@ -94,47 +112,23 @@ def find_url_offset(data: bytes, salt: bytes) -> tuple[int, str]:
     raise SystemExit("could not locate the activation URL blob")
 
 
-def is_pc_relative(word: bytes) -> bool:
-    """True when the 4-byte AArch64 word encodes a PC-relative immediate.
-
-    Those words depend on where their targets end up in the binary, so they
-    change whenever unrelated code moves even though the logic here is
-    untouched.  iPoGo 4.3.4 moved four callees, which is what broke the old
-    fixed-byte signature.
-    """
-    value = int.from_bytes(word, "little")
-    opcode = value >> 26
-    if opcode in (0b100101, 0b000101):  # BL, B
-        return True
-    if opcode == 0b10000:  # ADR, ADRP
-        return True
-    if (value >> 24) & 0x3F == 0b011000:  # LDR (literal)
-        return True
-    if (value & 0xFF000010) == 0x54000000:  # B.cond, BC.cond
-        return True
-    if (value & 0x7E000000) in (0x34000000, 0x36000000):  # CBZ/CBNZ, TBZ/TBNZ
-        return True
-    return False
-
-
 def find_time_offset(data: bytes, base: str) -> int:
-    signature = TIME_BEFORE + TIME_BRANCH + TIME_AFTER
-    words = [signature[index:index + 4] for index in range(0, len(signature), 4)]
-    wildcard = [is_pc_relative(word) for word in words]
-
-    cursor = data.find(TIME_BEFORE)
-    while cursor >= 0:
+    for offset in range(0, len(data) - 3, 4):
+        word = int.from_bytes(data[offset:offset + 4], "little")
+        if word & TIME_BRANCH_MASK != TIME_BRANCH_HI:
+            continue
         if all(
-            wildcard[index]
-            or data[cursor + index * 4:cursor + index * 4 + 4] == word
-            for index, word in enumerate(words)
+            offset + delta >= 0
+            and int.from_bytes(data[offset + delta:offset + delta + 4], "little") & mask == value
+            for delta, mask, value in TIME_SHAPE
         ):
-            return cursor + len(TIME_BEFORE)
-        cursor = data.find(TIME_BEFORE, cursor + 1)
+            return offset
 
     fallback = TIME_OFFSETS.get(base)
-    if fallback is not None and data[fallback:fallback + 4] == TIME_BRANCH:
-        return fallback
+    if fallback is not None:
+        word = int.from_bytes(data[fallback:fallback + 4], "little")
+        if word & TIME_BRANCH_MASK == TIME_BRANCH_HI:
+            return fallback
     raise SystemExit(f"could not locate the server-time check for iPoGo {base}")
 
 
@@ -157,13 +151,13 @@ def patch_deb(deb_path: Path, version: str, base_version: str, upstream_sha: str
     base = base_version.split("-", 1)[0]
     time_offset = find_time_offset(bytes(data), base)
     found = int.from_bytes(bytes(data[time_offset:time_offset + 4]), "little")
-    if found & 0xFF00000F != TIME_BRANCH_BITS:
+    if found & TIME_BRANCH_MASK != TIME_BRANCH_HI:
         raise SystemExit(f"unexpected time-check instruction at 0x{time_offset:X}: {found:08x}")
     data[time_offset:time_offset + 4] = NOP
 
     dylib.write_bytes(data)
     print(f"patched URL at 0x{url_offset:X}: {old_url} -> {NEW_URL.decode()}")
-    print(f"patched time check at 0x{time_offset:X}: 88070054 -> {NOP.hex()}")
+    print(f"patched time check at 0x{time_offset:X}: {found:08x} -> {NOP.hex()}")
 
     control = root / "DEBIAN" / "control"
     control_text = control.read_text()
